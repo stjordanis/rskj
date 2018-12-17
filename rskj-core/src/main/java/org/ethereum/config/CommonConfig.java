@@ -25,6 +25,7 @@ import co.rsk.db.RepositoryImpl;
 import co.rsk.trie.TrieStoreImpl;
 import org.ethereum.core.Repository;
 import org.ethereum.core.Transaction;
+import org.ethereum.datasource.DataSourceWithCache;
 import org.ethereum.datasource.KeyValueDataSource;
 import org.ethereum.datasource.LevelDbDataSource;
 import org.ethereum.db.TrieStorePoolOnDisk;
@@ -57,12 +58,16 @@ public class CommonConfig {
             FileUtil.recursiveDelete(databaseDir);
             logger.info("Database reset done");
         }
-        return buildRepository(databaseDir, config.detailsInMemoryStorageLimit());
+        return buildRepository(databaseDir, config.detailsInMemoryStorageLimit(), config.getStatesCacheSize());
     }
 
-    public Repository buildRepository(String databaseDir, int memoryStorageLimit) {
+    public Repository buildRepository(String databaseDir, int memoryStorageLimit, int statesCacheSize) {
         KeyValueDataSource ds = makeDataSource("state", databaseDir);
         KeyValueDataSource detailsDS = makeDataSource("details", databaseDir);
+
+        if (statesCacheSize != 0) {
+            ds = new DataSourceWithCache(ds, statesCacheSize);
+        }
 
         return new RepositoryImpl(new TrieStoreImpl(ds), detailsDS,
                                   new TrieStorePoolOnDisk(databaseDir),

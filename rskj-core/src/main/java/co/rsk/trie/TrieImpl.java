@@ -461,6 +461,14 @@ public class TrieImpl implements Trie {
         return buffer.array();
     }
 
+    @Override
+    public void flush() {
+        if (this.store==null) {
+            return;
+        }
+        this.store.flush();
+    }
+
     /**
      * save saves the unsaved current trie and subnodes to their associated store
      *

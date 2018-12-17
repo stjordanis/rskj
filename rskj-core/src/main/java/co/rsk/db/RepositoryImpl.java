@@ -297,6 +297,7 @@ public class RepositoryImpl implements Repository {
 
         if (this.store != null) {
             this.trie.save();
+            this.trie.flush();
         }
     }
 
