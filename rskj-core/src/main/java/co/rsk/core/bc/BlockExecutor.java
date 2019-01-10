@@ -20,16 +20,17 @@ package co.rsk.core.bc;
 
 import co.rsk.core.Coin;
 import co.rsk.core.RskAddress;
-import co.rsk.trie.OldTrieImpl;
-import co.rsk.trie.Trie;
+import co.rsk.trie.MutableTrie;
+import co.rsk.trie.TrieConverter;
 import co.rsk.trie.TrieImpl;
 import org.bouncycastle.util.encoders.Hex;
+import org.ethereum.config.BlockchainNetConfig;
+import org.ethereum.config.SystemProperties;
 import org.ethereum.core.*;
-import org.ethereum.crypto.HashUtil;
-import org.ethereum.util.RLP;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -47,10 +48,12 @@ public class BlockExecutor {
 
     private final Repository repository;
     private final TransactionExecutorFactory transactionExecutorFactory;
+    private final BlockchainNetConfig blockchainConfig;
 
     public BlockExecutor(Repository repository, TransactionExecutorFactory transactionExecutorFactory) {
         this.repository = repository;
         this.transactionExecutorFactory = transactionExecutorFactory;
+        this.blockchainConfig = SystemProperties.DONOTUSE_blockchainConfig;
     }
 
     /**
@@ -79,7 +82,7 @@ public class BlockExecutor {
     private void fill(Block block, BlockResult result) {
         block.setTransactionsList(result.getExecutedTransactions());
         BlockHeader header = block.getHeader();
-        header.setTransactionsRoot(Block.getTxTrieRoot(block.getTransactionsList(), Block.isHardFork9999(block.getNumber())));
+        header.setTransactionsRoot(BlockHashesHelper.getTxTrieRoot(block.getTransactionsList(), BlockHashesHelper.isRskipUnitrie(block.getNumber())));
         header.setReceiptsRoot(result.getReceiptsRoot());
         header.setGasUsed(result.getGasUsed());
         header.setPaidFees(result.getPaidFees());
@@ -117,13 +120,15 @@ public class BlockExecutor {
         }
 
         byte[] computedStateRoot;
-        if (Block.isHardFork9999(block.getNumber())) {
+        if (BlockHashesHelper.isRskipUnitrie(block.getNumber())) {
             computedStateRoot = result.getStateRoot();
         } else {
             // Here we need the repository caches to be fully commited
             // TrieImpl aTrie =(TrieImpl) repository.getMutableTrie().getTrie();
             // computedStateRoot = TrieConverter.computeOldTrieRoot(aTrie);
-            computedStateRoot = result.getStateRoot();
+            long start = System.currentTimeMillis();
+            computedStateRoot = TrieConverter.computeOldAccountTrieRoot((TrieImpl)result.getFinalState());
+            System.out.println("AFTER TRIE CONVERTER " + Duration.ofMillis(System.currentTimeMillis()- start).toMillis());
         }
 
         if (!Arrays.equals(computedStateRoot, block.getStateRoot()))  {
@@ -288,16 +293,25 @@ public class BlockExecutor {
         // All data saved to disk
         initialRepository.save();
 
-        lastStateRootHash = initialRepository.getRoot();
-        boolean hardfork9999 = Block.isHardFork9999(block.getNumber());
+        TrieImpl aTrie = null;
+        boolean isRskipUnitrieEnabled = blockchainConfig.getConfigForBlock(block.getNumber()).isRskipUnitrie();
+        if (isRskipUnitrieEnabled) {
+            lastStateRootHash = initialRepository.getRoot();
+        } else {
+            MutableTrie mutableTrie = initialRepository.getMutableTrie();
+            aTrie = (TrieImpl) mutableTrie.getTrie();
+            lastStateRootHash = TrieConverter.computeOldAccountTrieRoot(aTrie);
+        }
+
         return new BlockResult(
                 executedTransactions,
                 receipts,
                 lastStateRootHash,
                 totalGasUsed,
                 totalPaidFees,
-                calcReceiptsTrie(receipts, hardfork9999),
-                calculateLogsBloom(receipts)
+                BlockHashesHelper.calculateReceiptsTrieRoot(receipts, isRskipUnitrieEnabled),
+                calculateLogsBloom(receipts),
+                aTrie
         );
     }
 
@@ -309,26 +323,6 @@ public class BlockExecutor {
         }
 
         return logBloom.getData();
-    }
-
-    public static byte[] calcReceiptsTrie(List<TransactionReceipt> receipts, boolean hardfork9999) {
-        if (hardfork9999) {
-            return calcReceiptsTrie(receipts, new TrieImpl());
-        }
-
-        return calcReceiptsTrie(receipts, new OldTrieImpl());
-    }
-
-    private static byte[] calcReceiptsTrie(List<TransactionReceipt> receipts, Trie receiptsTrie) {
-        if (receipts.isEmpty()) {
-            return HashUtil.EMPTY_TRIE_HASH;
-        }
-
-        for (int i = 0; i < receipts.size(); i++) {
-            receiptsTrie = receiptsTrie.put(RLP.encodeInt(i), receipts.get(i).getEncoded());
-        }
-
-        return receiptsTrie.getHash().getBytes();
     }
 
     public interface TransactionExecutorFactory {

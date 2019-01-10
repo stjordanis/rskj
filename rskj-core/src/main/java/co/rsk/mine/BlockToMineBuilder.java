@@ -24,6 +24,7 @@ import co.rsk.core.Coin;
 import co.rsk.core.DifficultyCalculator;
 import co.rsk.core.RskAddress;
 import co.rsk.core.bc.BlockExecutor;
+import co.rsk.core.bc.BlockHashesHelper;
 import co.rsk.core.bc.FamilyUtils;
 import co.rsk.remasc.RemascTransaction;
 import co.rsk.validators.BlockValidationRule;
@@ -214,7 +215,7 @@ public class BlockToMineBuilder {
                 CollectionUtils.size(uncles)
         );
         newHeader.setDifficulty(difficultyCalculator.calcDifficulty(newHeader, newBlockParent.getHeader()));
-        newHeader.setTransactionsRoot(Block.getTxTrieRoot(txs,Block.isHardFork9999(newHeader.getNumber())));
+        newHeader.setTransactionsRoot(BlockHashesHelper.getTxTrieRoot(txs, BlockHashesHelper.isRskipUnitrie(newHeader.getNumber())));
         return newHeader;
     }
 }

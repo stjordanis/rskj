@@ -24,6 +24,7 @@ import co.rsk.config.TestSystemProperties;
 import co.rsk.core.Coin;
 import co.rsk.core.RskAddress;
 import co.rsk.db.RepositoryImpl;
+import co.rsk.db.StateRootTranslator;
 import co.rsk.test.builders.BlockBuilder;
 import co.rsk.test.builders.BlockChainBuilder;
 import co.rsk.trie.TrieImpl;
@@ -153,7 +154,6 @@ public class BlockChainImplTest {
         Block genesis = BlockChainImplTest.getGenesisBlock(blockChain);
 
         blockChain.setBestBlock(genesis);
-        blockChain.setTotalDifficulty(genesis.getCumulativeDifficulty());
         BlockChainStatus status = blockChain.getStatus();
 
         Assert.assertNotNull(status);
@@ -945,7 +945,7 @@ public class BlockChainImplTest {
                 config.databaseDir(),
                 config.vmTraceDir(),
                 config.vmTraceCompressed()
-        )));
+        )), new StateRootTranslator(new HashMapDB(), new HashMap<>()));
     }
 
     // This method modifies the repository! Not nice for a getter.

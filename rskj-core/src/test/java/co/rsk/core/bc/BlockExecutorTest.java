@@ -23,9 +23,9 @@ import co.rsk.config.TestSystemProperties;
 import co.rsk.core.Coin;
 import co.rsk.db.RepositoryImpl;
 import co.rsk.test.builders.BlockChainBuilder;
-import co.rsk.trie.TrieImpl;
 import co.rsk.trie.TrieStoreImpl;
-import com.google.common.collect.Lists;
+import org.bouncycastle.util.BigIntegers;
+import org.bouncycastle.util.encoders.Hex;
 import org.ethereum.core.*;
 import org.ethereum.crypto.ECKey;
 import org.ethereum.crypto.HashUtil;
@@ -43,12 +43,11 @@ import org.ethereum.vm.program.invoke.ProgramInvokeFactoryImpl;
 import org.ethereum.vm.trace.ProgramTrace;
 import org.junit.Assert;
 import org.junit.Test;
-import org.bouncycastle.util.BigIntegers;
-import org.bouncycastle.util.encoders.Hex;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static org.ethereum.util.ByteUtil.EMPTY_BYTE_ARRAY;
@@ -165,7 +164,7 @@ public class BlockExecutorTest {
 
         Assert.assertNotNull(result.getReceiptsRoot());
         Assert.assertArrayEquals(
-                BlockExecutor.calcReceiptsTrie(result.getTransactionReceipts(), Block.isHardFork9999(block.getNumber())),
+                BlockHashesHelper.calculateReceiptsTrieRoot(result.getTransactionReceipts(), BlockHashesHelper.isRskipUnitrie(block.getNumber())),
                 result.getReceiptsRoot()
         );
 
@@ -275,7 +274,7 @@ public class BlockExecutorTest {
 
         Assert.assertNotNull(result.getReceiptsRoot());
         Assert.assertArrayEquals(
-                BlockExecutor.calcReceiptsTrie(result.getTransactionReceipts(), Block.isHardFork9999(block.getNumber())),
+                BlockHashesHelper.calculateReceiptsTrieRoot(result.getTransactionReceipts(), BlockHashesHelper.isRskipUnitrie(block.getNumber())),
                 result.getReceiptsRoot()
         );
 
@@ -401,10 +400,10 @@ public class BlockExecutorTest {
         Assert.assertEquals(1, block.getTransactionsList().size());
         Assert.assertEquals(tx, block.getTransactionsList().get(0));
         Assert.assertArrayEquals(
-                Block.getTxTrieRoot(Lists.newArrayList(tx), Block.isHardFork9999(block.getNumber())),
+                BlockHashesHelper.getTxTrieRoot(Collections.singletonList(tx), BlockHashesHelper.isRskipUnitrie(block.getNumber())),
                 block.getTxTrieRoot()
         );
-        
+
         Assert.assertEquals(3141592, new BigInteger(1, block.getGasLimit()).longValue());
     }
 
@@ -828,7 +827,7 @@ public class BlockExecutorTest {
 
         Assert.assertNotNull(result.getReceiptsRoot());
         Assert.assertArrayEquals(
-                BlockExecutor.calcReceiptsTrie(result.getTransactionReceipts(),Block.isHardFork9999(block.getNumber())),
+                BlockHashesHelper.calculateReceiptsTrieRoot(result.getTransactionReceipts(), BlockHashesHelper.isRskipUnitrie(block.getNumber())),
                 result.getReceiptsRoot()
         );
 

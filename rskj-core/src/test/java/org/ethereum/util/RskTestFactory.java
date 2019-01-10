@@ -10,6 +10,7 @@ import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
 import co.rsk.core.bc.TransactionPoolImpl;
 import co.rsk.db.RepositoryImpl;
+import co.rsk.db.StateRootTranslator;
 import co.rsk.net.BlockNodeInformation;
 import co.rsk.net.BlockSyncService;
 import co.rsk.net.NodeBlockProcessor;
@@ -64,7 +65,6 @@ public class RskTestFactory {
         genesis.setStateRoot(getRepository().getRoot());
         genesis.flushRLP();
         getBlockchain().setBestBlock(genesis);
-        getBlockchain().setTotalDifficulty(genesis.getCumulativeDifficulty());
     }
 
     public ContractDetails addContract(String runtimeBytecode) {
@@ -175,11 +175,15 @@ public class RskTestFactory {
                             config.databaseDir(),
                             config.vmTraceDir(),
                             config.vmTraceCompressed()
-                    ))
+                    )), getStateRootTranslator()
             );
         }
 
         return blockchain;
+    }
+
+    private StateRootTranslator getStateRootTranslator() {
+        return new StateRootTranslator(new HashMapDB(), new HashMap<>());
     }
 
     public ReceiptStore getReceiptStore() {

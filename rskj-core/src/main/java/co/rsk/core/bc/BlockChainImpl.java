@@ -20,8 +20,13 @@ package co.rsk.core.bc;
 
 import co.rsk.blocks.BlockRecorder;
 import co.rsk.core.BlockDifficulty;
+import co.rsk.crypto.Keccak256;
+import co.rsk.db.StateRootTranslator;
 import co.rsk.net.Metrics;
 import co.rsk.panic.PanicProcessor;
+import co.rsk.trie.Trie;
+import co.rsk.trie.TrieConverter;
+import co.rsk.trie.TrieImpl;
 import co.rsk.validators.BlockValidator;
 import com.google.common.annotations.VisibleForTesting;
 import org.ethereum.core.*;
@@ -79,6 +84,7 @@ public class BlockChainImpl implements Blockchain {
     private final ReceiptStore receiptStore;
     private final TransactionPool transactionPool;
     private final EthereumListener listener;
+    private final StateRootTranslator stateRootTranslator;
     private BlockValidator blockValidator;
 
     private volatile BlockChainStatus status = new BlockChainStatus(null, BlockDifficulty.ZERO);
@@ -101,7 +107,8 @@ public class BlockChainImpl implements Blockchain {
                           BlockValidator blockValidator,
                           boolean flushEnabled,
                           int flushNumberOfBlocks,
-                          BlockExecutor blockExecutor) {
+                          BlockExecutor blockExecutor,
+                          StateRootTranslator stateRootTranslator) {
         this.repository = repository;
         this.blockStore = blockStore;
         this.receiptStore = receiptStore;
@@ -111,6 +118,7 @@ public class BlockChainImpl implements Blockchain {
         this.flushNumberOfBlocks = flushNumberOfBlocks;
         this.blockExecutor = blockExecutor;
         this.transactionPool = transactionPool;
+        this.stateRootTranslator = stateRootTranslator;
     }
 
     @Override
@@ -251,10 +259,14 @@ public class BlockChainImpl implements Blockchain {
             long saveTime = System.nanoTime();
             logger.trace("execute start");
 
+            byte[] parentRootHash = parent.getStateRoot();
+            if (!BlockHashesHelper.isRskipUnitrie(block.getNumber())) {
+                parentRootHash = stateRootTranslator.get(new Keccak256(parentRootHash)).getBytes();
+            }
             if (this.noValidation) {
-                result = blockExecutor.executeAll(block, parent.getStateRoot());
+                result = blockExecutor.executeAll(block, parentRootHash);
             } else {
-                result = blockExecutor.execute(block, parent.getStateRoot(), false);
+                result = blockExecutor.execute(block, parentRootHash, false);
             }
 
             logger.trace("execute done");
@@ -290,7 +302,10 @@ public class BlockChainImpl implements Blockchain {
             }
 
             logger.trace("Start switchToBlockChain");
-            switchToBlockChain(block, totalDifficulty);
+
+            // Genesis block has no result
+            Trie finalState = (result != null) ? result.getFinalState() : null;
+            switchToBlockChain(block, totalDifficulty, finalState);
             logger.trace("Start saveReceipts");
             saveReceipts(block, result);
             logger.trace("Start processBest");
@@ -318,9 +333,9 @@ public class BlockChainImpl implements Blockchain {
                         bestBlock.getShortHash(), block.getShortHash(), bestBlock.getNumber(), block.getNumber(),
                         status.getTotalDifficulty().toString(), totalDifficulty.toString());
             }
-
+            Trie finalState = (result != null) ? result.getFinalState() : null;
             logger.trace("Start extendAlternativeBlockChain");
-            extendAlternativeBlockChain(block, totalDifficulty);
+            extendAlternativeBlockChain(block, totalDifficulty, finalState);
             logger.trace("Start saveReceipts");
             saveReceipts(block, result);
             logger.trace("Start onBlock");
@@ -353,8 +368,21 @@ public class BlockChainImpl implements Blockchain {
     public void setStatus(Block block, BlockDifficulty totalDifficulty) {
         synchronized (accessLock) {
             status = new BlockChainStatus(block, totalDifficulty);
+
+            if (!BlockHashesHelper.isRskipUnitrie(block.getNumber())) {
+                if (block.isGenesis()) {
+                    byte[] stateRootHash = TrieConverter.computeOldAccountTrieRoot(
+                            (TrieImpl) repository.getMutableTrie().getTrie());
+                    stateRootTranslator.put(new Keccak256(stateRootHash), new Keccak256(block.getStateRoot()));
+                    repository.syncToRoot(block.getStateRoot());
+                    block.setStateRoot(stateRootHash);
+                } else {
+                    repository.syncToRoot(stateRootTranslator.get(new Keccak256(block.getStateRoot())).getBytes());
+                }
+            } else {
+                repository.syncToRoot(block.getStateRoot());
+            }
             blockStore.saveBlock(block, totalDifficulty, true);
-            repository.syncToRoot(block.getStateRoot());
         }
     }
 
@@ -467,16 +495,27 @@ public class BlockChainImpl implements Blockchain {
         this.blockRecorder = blockRecorder;
     }
 
-    private void switchToBlockChain(Block block, BlockDifficulty totalDifficulty) {
+    private void switchToBlockChain(Block block, BlockDifficulty totalDifficulty, Trie finalState) {
         synchronized (accessLock) {
             storeBlock(block, totalDifficulty, true);
             status = new BlockChainStatus(block, totalDifficulty);
-            repository.syncToRoot(block.getStateRoot());
+
+            if (finalState != null) {
+                repository.syncTo(finalState);
+                if (!BlockHashesHelper.isRskipUnitrie(block.getNumber())) {
+                    stateRootTranslator.put(new Keccak256(block.getStateRoot()), finalState.getHash());
+                }
+            } else {
+                repository.syncToRoot(block.getStateRoot());
+            }
         }
     }
 
-    private void extendAlternativeBlockChain(Block block, BlockDifficulty totalDifficulty) {
+    private void extendAlternativeBlockChain(Block block, BlockDifficulty totalDifficulty, Trie finalState) {
         storeBlock(block, totalDifficulty, false);
+        if (!BlockHashesHelper.isRskipUnitrie(block.getNumber())) {
+            stateRootTranslator.put(new Keccak256(block.getStateRoot()), finalState.getHash());
+        }
     }
 
     private void storeBlock(Block block, BlockDifficulty totalDifficulty, boolean inBlockChain) {

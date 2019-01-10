@@ -23,6 +23,7 @@ import co.rsk.config.TestSystemProperties;
 import co.rsk.core.RskAddress;
 import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
+import co.rsk.db.StateRootTranslator;
 import org.ethereum.core.Block;
 import org.ethereum.core.Repository;
 import org.ethereum.core.Transaction;
@@ -142,7 +143,7 @@ public class StateTestRunner {
                 config.databaseDir(),
                 config.vmTraceDir(),
                 config.vmTraceCompressed()
-        )));
+        )), new StateRootTranslator(new HashMapDB(), new HashMap<>()));
 
         env = EnvBuilder.build(stateTestCase.getEnv());
         invokeFactory = new TestProgramInvokeFactory(env);

@@ -26,6 +26,7 @@ import co.rsk.core.bc.BlockChainImpl;
 import co.rsk.core.bc.BlockExecutor;
 import co.rsk.core.bc.TransactionPoolImpl;
 import co.rsk.db.RepositoryImpl;
+import co.rsk.db.StateRootTranslator;
 import co.rsk.trie.TrieStoreImpl;
 import co.rsk.validators.DummyBlockValidator;
 import org.ethereum.config.blockchain.GenesisConfig;
@@ -97,7 +98,7 @@ public class ImportLightTest {
                         config.databaseDir(),
                         config.vmTraceDir(),
                         config.vmTraceCompressed()
-                ))
+                )), new StateRootTranslator(new HashMapDB(), new HashMap<>())
         );
 
         blockchain.setNoValidation(true);
@@ -117,7 +118,6 @@ public class ImportLightTest {
         blockStore.saveBlock(genesis, genesis.getCumulativeDifficulty(), true);
 
         blockchain.setBestBlock(genesis);
-        blockchain.setTotalDifficulty(genesis.getCumulativeDifficulty());
 
         return blockchain;
     }

@@ -25,11 +25,13 @@ import co.rsk.core.Coin;
 import co.rsk.core.RskAddress;
 import co.rsk.core.bc.*;
 import co.rsk.db.RepositoryImpl;
+import co.rsk.db.StateRootTranslator;
 import co.rsk.peg.RepositoryBlockStore;
 import co.rsk.trie.TrieImpl;
 import co.rsk.trie.TrieStoreImpl;
 import co.rsk.validators.BlockValidator;
 import co.rsk.validators.DummyBlockValidator;
+import org.ethereum.config.DefaultConfig;
 import org.ethereum.core.*;
 import org.ethereum.datasource.HashMapDB;
 import org.ethereum.datasource.KeyValueDataSource;
@@ -173,7 +175,8 @@ public class BlockChainBuilder {
                 config.databaseDir(),
                 config.vmTraceDir(),
                 config.vmTraceCompressed()
-        )));
+        )), new StateRootTranslator(new HashMapDB(), new HashMap<>())
+        );
 
         if (this.testing) {
             blockChain.setBlockValidator(new DummyBlockValidator());
@@ -193,8 +196,6 @@ public class BlockChainBuilder {
             this.genesis.setStateRoot(this.repository.getRoot());
             this.genesis.flushRLP();
             blockChain.setBestBlock(this.genesis);
-
-            blockChain.setTotalDifficulty(this.genesis.getCumulativeDifficulty());
         }
 
         if (this.blocks != null) {
