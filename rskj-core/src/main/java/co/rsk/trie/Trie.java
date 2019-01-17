@@ -21,6 +21,7 @@ package co.rsk.trie;
 import co.rsk.crypto.Keccak256;
 import org.ethereum.db.ByteArrayWrapper;
 
+import javax.annotation.Nullable;
 import java.util.Set;
 import java.util.function.BiFunction;
 
@@ -74,6 +75,9 @@ public interface Trie {
 
     Trie getSnapshotTo(Keccak256 hash);
 
+    @Nullable
+    Keccak256 getHash(int n);
+
     byte[] serialize();
 
     boolean hasStore();
@@ -93,5 +97,12 @@ public interface Trie {
     // two nodes. In that case it will return false.
     boolean hasDataWithPrefix(byte[] key);
 
+    int getNodeCount();
+
     BiFunction<byte[], TrieStore, Trie> fromMessageFunction();
+
+    // These two functions are for converting the trie to the old format
+    byte[] getEncodedSharedPath();
+
+    int getSharedPathLength();
 }

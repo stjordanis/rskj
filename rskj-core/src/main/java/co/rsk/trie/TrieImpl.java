@@ -75,10 +75,10 @@ public class TrieImpl implements Trie {
     protected static final String ERROR_NON_EXISTENT_TRIE_LOGGER = "Error non existent trie with hash {}";
     protected static final String ERROR_NON_EXISTENT_TRIE = "Error non existent trie with hash ";
 
-    private static final int MESSAGE_HEADER_LENGTH = 1 + Short.BYTES ;
+    public static final int MESSAGE_HEADER_LENGTH = 1 + Short.BYTES ;
     private static final int SERIALIZATION_HEADER_LENGTH = Short.BYTES * 2 + Integer.BYTES * 2;
-    private static final int ISSECURE_MASK = 64;
-    private static final int LONGVAL_MASK = 32;
+    public static final int ISSECURE_MASK = 64;
+    public static final int LONGVAL_MASK = 32;
 
     // all zeroed, default hash for empty nodes
     private static Keccak256 emptyHash = makeEmptyHash();
@@ -180,111 +180,8 @@ public class TrieImpl implements Trie {
         return fromMessage(message, 0, message.length, store);
     }
 
-    private static final void encodeUInt24(ByteBuffer buffer,int len) {
-        buffer.put( (byte) ((len & 0x00FF0000) >> 16));
-        buffer.put( (byte) ((len & 0x0000FF00) >> 8));
-        buffer.put( (byte) ((len & 0X000000FF)));
-    }
-
-    private static final int readUInt24(DataInputStream in ) throws IOException {
-        // Big-Endigan
-        int ch1 = in.read();
-        int ch2 = in.read();
-        int ch3 = in.read();
-        if ((ch1 | ch2 | ch3) < 0) // detect -1 (EOF)
-            throw new EOFException();
-        return ((ch1 << 16) + (ch2 << 8) + (ch3 << 0));
-    }
-
     private static TrieImpl fromMessage(byte[] message, int position, int msglength, TrieStore store) {
-        if (message == null) {
-            return null;
-        }
-
-        ByteArrayInputStream bstream = new ByteArrayInputStream(message, position, msglength);
-        DataInputStream istream = new DataInputStream(bstream);
-
-        try {
-            int flags = istream.readByte();
-            boolean isSecure = (flags & ISSECURE_MASK) !=0;
-            boolean hasLongVal = (flags & LONGVAL_MASK) !=0;
-            int bhashes = flags;
-            int lshared = istream.readShort();
-
-            int nhashes = 0;
-            int lencoded = TrieImpl.getEncodedPathLength(lshared);
-
-            byte[] encodedSharedPath = null;
-
-            if (lencoded > 0) {
-                encodedSharedPath = new byte[lencoded];
-                if (istream.read(encodedSharedPath) != lencoded) {
-                    throw new EOFException();
-                }
-            }
-
-            Keccak256[] hashes = new Keccak256[ARITY];
-
-            for (int k = 0; k < ARITY; k++) {
-                if ((bhashes & (1 << k)) == 0) {
-                    continue;
-                }
-
-                byte[] nodeHash = new byte[Keccak256Helper.DEFAULT_SIZE_BYTES];
-
-                if (istream.read(nodeHash) != Keccak256Helper.DEFAULT_SIZE_BYTES) {
-                    throw new EOFException();
-                }
-
-                hashes[k] = new Keccak256(nodeHash);
-                nhashes++;
-            }
-
-            int offset = MESSAGE_HEADER_LENGTH + lencoded + nhashes * Keccak256Helper.DEFAULT_SIZE_BYTES;
-            byte[] value = null;
-            int lvalue;
-            byte[] valueHash = null;
-
-            if (hasLongVal) {
-                valueHash = new byte[Keccak256Helper.DEFAULT_SIZE_BYTES];
-
-                if (istream.read(valueHash) != Keccak256Helper.DEFAULT_SIZE_BYTES) {
-                    throw new EOFException();
-                }
-
-                // Now retrieve lvalue explicitely
-                lvalue = readUInt24(istream);
-
-                // This should be lazy: we don't need to retrieve the long value
-                // until it's used.
-                value = null;
-
-            }
-            else {
-                lvalue = msglength - offset;
-
-                if (lvalue > 0) {
-                    value = new byte[lvalue];
-                    if (istream.read(value) != lvalue) {
-                        throw new EOFException();
-                    }
-                }
-            }
-
-            // TODO: THIS IS SHIT
-            TrieImpl trie = new TrieImpl(encodedSharedPath, lshared, value, null,
-                    hashes, store,lvalue,valueHash, isSecure);
-
-            if (store != null) {
-                trie.saved = true;
-            }
-
-            return trie;
-        } catch (IOException ex) {
-            logger.error(ERROR_CREATING_TRIE, ex);
-            panicProcessor.panic(PANIC_TOPIC, ERROR_CREATING_TRIE +": " + ex.getMessage());
-            throw new TrieSerializationException(ERROR_CREATING_TRIE, ex);
-        }
+        return TrieSerializer.fromMessage(message, position, msglength, store);
     }
 
     /**
@@ -433,66 +330,7 @@ public class TrieImpl implements Trie {
      */
     @Override
     public byte[] toMessage() {
-        int lvalue = this.valueLength;
-        int nnodes = this.getNodeCount();
-        int lshared = this.sharedPathLength;
-        int lencoded = getEncodedPathLength(lshared);
-        boolean hasLongVal = this.hasLongValue();
-
-        int bits = 0;
-
-        for (int k = 0; k < ARITY; k++) {
-            Keccak256 nodeHash = this.getHash(k);
-
-            if (nodeHash == null) {
-                continue;
-            }
-
-            bits |= 1 << k;
-        }
-
-        ByteBuffer buffer = ByteBuffer.allocate(MESSAGE_HEADER_LENGTH + lencoded
-                + nnodes * Keccak256Helper.DEFAULT_SIZE_BYTES
-                + (hasLongVal ? (Keccak256Helper.DEFAULT_SIZE_BYTES+3) : lvalue));
-
-        byte flags = 0;
-
-        if (this.isSecure) {
-            flags |= ISSECURE_MASK;
-        }
-
-        if (hasLongVal) {
-            flags |= LONGVAL_MASK;
-        }
-        flags |=bits;
-        buffer.put(flags);
-        buffer.putShort((short) lshared);
-
-        if (lshared > 0) {
-            buffer.put(encodedSharedPath);
-        }
-
-        for (int k = 0; k < ARITY; k++) {
-            Keccak256 nodeHash = this.getHash(k);
-
-            if (nodeHash == null) {
-                continue;
-            }
-
-            buffer.put(nodeHash.getBytes());
-        }
-
-        if (lvalue > 0) {
-            if (hasLongVal) {
-                buffer.put(this.getValueHash());
-                encodeUInt24(buffer,this.valueLength);
-            }
-            else {
-                buffer.put(this.getValue());
-            }
-        }
-
-        return buffer.array();
+        return new TrieSerializer().invoke(this);
     }
 
     /**
@@ -785,7 +623,8 @@ public class TrieImpl implements Trie {
      * Takes into account that a node could be not present as an object and
      * only be referenced via its unique hash
      */
-    protected int getNodeCount() {
+    @Override
+    public int getNodeCount() {
         int count = 0;
 
         for (int k = 0; k < ARITY; k++) {
@@ -856,8 +695,9 @@ public class TrieImpl implements Trie {
      *
      * @return  node hash or null if no node is present
      */
+    @Override
     @Nullable
-    protected Keccak256 getHash(int n) {
+    public Keccak256 getHash(int n) {
         if (this.hashes != null && this.hashes[n] != null) {
             return this.hashes[n];
         }
@@ -1372,10 +1212,6 @@ public class TrieImpl implements Trie {
         return this.value;
     }
 
-    protected static int getEncodedPathLength(int length) {
-        return length / 8 + (length % 8 == 0 ? 0 : 1);
-    }
-
     /**
      * makeEmpyHash creates the hash associated to empty nodes
      *
@@ -1385,11 +1221,13 @@ public class TrieImpl implements Trie {
         return new Keccak256(Keccak256Helper.keccak256(RLP.encodeElement(EMPTY_BYTE_ARRAY)));
     }
 
-    // These two functions are for converting the trie to the old format
-    protected byte[] getEncodedSharedPath() {
+    @Override
+    public byte[] getEncodedSharedPath() {
         return encodedSharedPath;
     }
-    protected int getSharedPathLength() {
+
+    @Override
+    public int getSharedPathLength() {
         return sharedPathLength;
     }
 
