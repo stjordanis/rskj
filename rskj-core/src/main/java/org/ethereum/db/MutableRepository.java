@@ -24,6 +24,12 @@ import java.util.stream.Stream;
 
 public class MutableRepository implements Repository {
 
+    // in bytes
+    public static final int SECURE_KEY_SIZE = 10;
+    // in bytes
+    public static final int ACCOUNT_KEY_SIZE = SECURE_KEY_SIZE + RskAddress.LENGTH_IN_BYTES;
+    public static final int STORAGE_KEY_SIZE = ACCOUNT_KEY_SIZE + Byte.BYTES + SECURE_KEY_SIZE + 32; //TODO(diegoll): add a constant to DataWord and use that instead of 32
+
     private static final Logger logger = LoggerFactory.getLogger("repository");
 
     private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
@@ -84,14 +90,11 @@ public class MutableRepository implements Repository {
     private static byte[] getAccountKey(RskAddress addr, boolean isSecure) {
         byte[] secureKey;
         if (isSecure) {
-            // Secure tries
-            secureKey = Keccak256Helper.keccak256(addr.getBytes());
+            secureKey = Arrays.copyOfRange(Keccak256Helper.keccak256(addr.getBytes()), 0, SECURE_KEY_SIZE);
         } else {
-            secureKey = addr.getBytes();
+            secureKey = new byte[]{};
         }
-
-        // a zero prefix allows us to extend the namespace in the future
-        return concat(DOMAIN_PREFIX, secureKey);
+        return concat(DOMAIN_PREFIX, secureKey, addr.getBytes());
     }
 
     private byte[] getAccountKeyChildKey(RskAddress addr, byte[] child) {
@@ -192,14 +195,11 @@ public class MutableRepository implements Repository {
     }
 
     public static byte[] getStorageTailKey(byte[] subkey, boolean isSecure) {
-        byte[] secureSubKey;
-        if (isSecure) {
-            // Secure tries
-            secureSubKey = Keccak256Helper.keccak256(subkey);
-        } else {
-            secureSubKey = subkey;
+        if (!isSecure) {
+            return subkey;
         }
-        return secureSubKey;
+        byte[] secureKey = Arrays.copyOfRange(Keccak256Helper.keccak256(subkey), 0, SECURE_KEY_SIZE);
+        return concat(secureKey, subkey);
     }
 
     private byte[] getAccountStorageKey(RskAddress addr, byte[] subkey) {

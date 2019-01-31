@@ -1,23 +1,19 @@
 package co.rsk.trie;
 
+import co.rsk.core.RskAddress;
 import co.rsk.crypto.Keccak256;
 import org.ethereum.core.AccountState;
 import org.ethereum.crypto.HashUtil;
-import org.ethereum.datasource.HashMapDB;
+import org.ethereum.crypto.Keccak256Helper;
+import org.ethereum.db.MutableRepository;
 
 import java.util.Arrays;
 import java.util.stream.Stream;
 
-/**
- * Created by SerAdmin on 10/23/2018.
- */
 public class TrieConverter {
-    //HashMapDB store;
-    private final TrieStoreImpl store;
 
-    public TrieConverter() {
-        this.store = new TrieStoreImpl(new HashMapDB());
-    }
+    private static final byte LEFT_CHILD_IMPLICIT_KEY = (byte) 0x00;
+    private static final byte RIGHT_CHILD_IMPLICIT_KEY = (byte) 0x01;
 
     public byte[] getOrchidAccountTrieRoot(TrieImpl src) {
         return getOrchidAccountTrieRoot(new byte[]{}, src, true);
@@ -32,9 +28,6 @@ public class TrieConverter {
         byte[] encodedSharedPath = src.getEncodedSharedPath();
         int sharedPathLength = src.getSharedPathLength();
         if (encodedSharedPath != null) {
-            //if (this.sharedPathLength+ key.length() > collectKeyLen)
-            //    return;
-
             byte[] sharedPath = PathEncoder.decode(encodedSharedPath, sharedPathLength);
             key = concat(key, sharedPath);
         }
@@ -42,7 +35,7 @@ public class TrieConverter {
             if (sharedPathLength < 8) {
                 throw new IllegalStateException("Unable to remove first 8-bits if path length is less than 8");
             }
-            sharedPathLength -=8;
+            sharedPathLength -= 8;
             encodedSharedPath = Arrays.copyOfRange(encodedSharedPath,1, encodedSharedPath.length);
         }
         TrieImpl child0 = (TrieImpl) src.retrieveNode(0);
@@ -50,7 +43,7 @@ public class TrieConverter {
         TrieImpl child1 = (TrieImpl) src.retrieveNode(1);
         byte[] child1Hash = null;
 
-        if (key.length == 8 * 32 + 8) {
+        if (key.length == (1 + MutableRepository.SECURE_KEY_SIZE + RskAddress.LENGTH_IN_BYTES) * Byte.SIZE) {
             // We've reached the Account level. From now on everything will be different.
             AccountState astate = new AccountState(src.getValue());
             OldAccountState oldState = new OldAccountState(astate.getNonce(),astate.getBalance());
@@ -72,57 +65,63 @@ public class TrieConverter {
                 oldState.setStateRoot(stateRoot);
             }
 
-            byte[] avalue =oldState.getEncoded();
+            byte[] avalue = oldState.getEncoded();
+            byte[] orchidKey = extractOrchidAccountKeyPathFromUnitrieKey(key, sharedPathLength);
+            encodedSharedPath = PathEncoder.encode(orchidKey);
+            sharedPathLength = orchidKey.length;
             TrieImpl newNode = new TrieImpl(
                     encodedSharedPath, sharedPathLength,
-                    avalue, null, null,store,
+                    avalue, null, null, null,
                     avalue.length,null).withSecure(src.isSecure());///src.isSecure()
 
             return newNode.getHash().getBytes();
         }
 
         if (child0 != null) {
-            child0Hash = getOrchidAccountTrieRoot(concat(key, (byte) 0), child0, false);
+            child0Hash = getOrchidAccountTrieRoot(concat(key, LEFT_CHILD_IMPLICIT_KEY), child0, false);
         }
 
         if (child1 != null) {
-            child1Hash = getOrchidAccountTrieRoot(concat(key, (byte) 1), child1, false);
+            child1Hash = getOrchidAccountTrieRoot(concat(key, RIGHT_CHILD_IMPLICIT_KEY), child1, false);
         }
 
         Keccak256[] hashes = Stream.of(child0Hash, child1Hash).map(hash -> hash==null? null : new Keccak256(hash)).toArray(Keccak256[]::new);
 
-        TrieImpl newNode = new TrieImpl(
-                encodedSharedPath, sharedPathLength,
-                src.getValue(), null, hashes,store,src.valueLength,
+        TrieImpl newNode = new TrieImpl(encodedSharedPath, sharedPathLength,
+                src.getValue(), null, hashes, null, src.valueLength,
                 src.getValueHash()).withSecure(src.isSecure());
 
         return newNode.getHash().getBytes();
     }
 
     private byte[] getOrchidStateRoot(TrieImpl unitrieStorageRoot) {
-        return getOrchidStateRoot(unitrieStorageRoot, true, false, (byte) 0);
+        return getOrchidStateRoot(new byte[] {}, unitrieStorageRoot, true, false, LEFT_CHILD_IMPLICIT_KEY);
     }
 
-    private byte[] getOrchidStateRoot(TrieImpl unitrieStorageRoot, boolean removeFirstNodePrefix, boolean onlyChild, byte ancestor) {
+    private byte[] getOrchidStateRoot(byte[] key, TrieImpl unitrieStorageRoot, boolean removeFirstNodePrefix, boolean onlyChild, byte ancestor) {
         if (unitrieStorageRoot == null) {
             return HashUtil.EMPTY_TRIE_HASH;
+        }
+
+        // shared Path
+        byte[] encodedSharedPath = unitrieStorageRoot.getEncodedSharedPath();
+        int sharedPathLength = unitrieStorageRoot.getSharedPathLength();
+        if (encodedSharedPath != null) {
+            byte[] sharedPath = PathEncoder.decode(encodedSharedPath, sharedPathLength);
+            key = concat(key, sharedPath);
         }
 
         TrieImpl child0 = (TrieImpl) unitrieStorageRoot.retrieveNode(0);
         TrieImpl child1 = (TrieImpl) unitrieStorageRoot.retrieveNode(1);
         byte[] child0Hash = null;
         if (child0 != null) {
-            child0Hash = getOrchidStateRoot(child0, false, removeFirstNodePrefix && child1 == null, (byte)0);
+            child0Hash = getOrchidStateRoot(concat(key, LEFT_CHILD_IMPLICIT_KEY), child0, false, removeFirstNodePrefix && child1 == null, LEFT_CHILD_IMPLICIT_KEY);
         }
 
         byte[] child1Hash = null;
         if (child1 != null) {
-            child1Hash = getOrchidStateRoot(child1, false, removeFirstNodePrefix && child0 == null, (byte)1);
+            child1Hash = getOrchidStateRoot(concat(key, RIGHT_CHILD_IMPLICIT_KEY), child1, false, removeFirstNodePrefix && child0 == null, RIGHT_CHILD_IMPLICIT_KEY);
         }
-
-        // shared Path
-        byte[] encodedSharedPath = unitrieStorageRoot.getEncodedSharedPath();
-        int sharedPathLength = unitrieStorageRoot.getSharedPathLength();
 
         Keccak256[] hashes = Stream.of(child0Hash, child1Hash).map(hash -> hash==null? null : new Keccak256(hash)).toArray(Keccak256[]::new);
 
@@ -153,9 +152,15 @@ public class TrieConverter {
             sharedPathLength++;
         }
 
+
+        if ((hashes[0]==null) && (hashes[1]==null)) { // terminal node
+            byte[] expandedSharedPath = extractOrchidStorageKeyPathFromUnitrieKey(key ,sharedPathLength);
+            encodedSharedPath = PathEncoder.encode(expandedSharedPath);
+            sharedPathLength = expandedSharedPath.length;
+        }
         TrieImpl newNode = new TrieImpl(
                 encodedSharedPath, sharedPathLength,
-                value, null, hashes, store,
+                value, null, hashes, null,
                 valueLength,valueHash).withSecure(unitrieStorageRoot.isSecure());
         return newNode.getHash().getBytes();
     }
@@ -169,4 +174,47 @@ public class TrieConverter {
         System.arraycopy(second, 0, result, first.length, second.length);
         return result;
     }
+
+    private byte[] extractOrchidAccountKeyPathFromUnitrieKey(byte[] key, int sharedPathLength) {
+        byte[] unsecuredKey = Arrays.copyOfRange(key, key.length - RskAddress.LENGTH_IN_BYTES * Byte.SIZE, key.length);
+        byte[] encodedKey = PathEncoder.encode(unsecuredKey);
+        byte[] orchidTrieSecureKey = Keccak256Helper.keccak256(encodedKey);
+
+        if (sharedPathLength < (MutableRepository.ACCOUNT_KEY_SIZE - MutableRepository.SECURE_KEY_SIZE) * Byte.SIZE) { // = 20 bytes = RskAddress.LENGTH_IN_BYTES
+            throw new IllegalArgumentException("The unitrie doesn't share as much structure as we need to rebuild the Orchid trie");
+        }
+
+        byte[] expandedOrchidTrieSecureKey = PathEncoder.decode(orchidTrieSecureKey, Keccak256Helper.DEFAULT_SIZE);
+        // the length of the structure that's shared between the Orchid trie and the Unitrie
+        int commonTriePathLength  = MutableRepository.ACCOUNT_KEY_SIZE * Byte.SIZE - sharedPathLength;
+        // the old key had 256 bits so the new node must contain what's needed to complete that information for an account
+        int newPrefixSize = Keccak256Helper.DEFAULT_SIZE - commonTriePathLength;
+
+        byte[] newDecodedPrefix = new byte[newPrefixSize];
+        System.arraycopy(expandedOrchidTrieSecureKey, commonTriePathLength, newDecodedPrefix, 0, newPrefixSize);
+
+        return newDecodedPrefix;
+    }
+
+    private byte[] extractOrchidStorageKeyPathFromUnitrieKey(byte[] key, int sharedPathLength) {
+        byte[] unsecuredKey = Arrays.copyOfRange(key, key.length - 256, key.length);
+        byte[] encodedKey = PathEncoder.encode(unsecuredKey);
+        byte[] orchidTrieSecureKey = Keccak256Helper.keccak256(encodedKey);
+
+        //(MutableRepository.STORAGE_KEY_SIZE - MutableRepository.SECURE_KEY_SIZE * 2 + MutableRepository.STORAGE_PREFIX.length )
+        if (sharedPathLength < 256) { //TODO(diegoll) review 248 = SECURE_KEY_SIZE + RskAddress size + STORAGE_PREFIX + SECURE_KEY_SIZE
+            throw new IllegalArgumentException("The unitrie storage doesn't share as much structure as we need to rebuild the Orchid trie");
+        }
+
+        byte[] expandedOrchidTrieSecureKey = PathEncoder.decode(orchidTrieSecureKey, Keccak256Helper.DEFAULT_SIZE);
+
+        int consumedFrom80bitPrefix  = 42 * Byte.SIZE - sharedPathLength;
+        int newPrefixSize  = sharedPathLength - 10 * Byte.SIZE;
+        byte[] newDecodedPrefix = new byte[newPrefixSize];
+
+        System.arraycopy(expandedOrchidTrieSecureKey, consumedFrom80bitPrefix, newDecodedPrefix, 0, newPrefixSize);
+
+        return newDecodedPrefix;
+    }
+
 }
