@@ -51,11 +51,8 @@ public class ToBase58Check extends NativeMethod {
             new String[]{"string"}
     );
 
-    private BTOUtilsHelper helper;
-
-    public ToBase58Check(ExecutionEnvironment executionEnvironment, BTOUtilsHelper helper) {
+    public ToBase58Check(ExecutionEnvironment executionEnvironment) {
         super(executionEnvironment);
-        this.helper = helper;
     }
 
     @Override
