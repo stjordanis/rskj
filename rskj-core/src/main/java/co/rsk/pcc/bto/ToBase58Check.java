@@ -74,7 +74,7 @@ public class ToBase58Check extends NativeMethod {
         }
         hash = Arrays.copyOfRange(hash, 0, 20);
 
-        byte version = helper.validateAndGetByteFromBigInteger((BigInteger) arguments[1]);
+        int version = ((BigInteger) arguments[1]).intValueExact();
 
         return new VersionedChecksummedBytes(version, hash).toBase58();
     }
