@@ -21,7 +21,9 @@ package co.rsk.trie;
 import co.rsk.crypto.Keccak256;
 import org.ethereum.db.ByteArrayWrapper;
 
+import java.util.Iterator;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Created by ajlopez on 29/03/2017.
@@ -83,6 +85,12 @@ public interface Trie {
 
     int getValueLength();
 
+    Iterator<IterationElement> getInOrderIterator();
+
+    Iterator<IterationElement> getPreOrderIterator();
+
+    Iterator<IterationElement> getPostOrderIterator();
+
     byte[] getValue();
 
     // find allows to explore a subtree
@@ -91,5 +99,56 @@ public interface Trie {
     // key can only be pointing to a real node, it cannot be a partial prefix betweeen
     // two nodes. In that case it will return false.
     boolean hasDataWithPrefix(byte[] key);
+
+    byte[] getEncodedSharedPath();
+
+    int getSharedPathLength();
+
+    class IterationElement {
+
+        private final byte[] traversedPath;
+        private final Trie node;
+
+        public IterationElement(final byte[] traversedPath, final Trie node) {
+            this.traversedPath = traversedPath;
+            this.node = node;
+        }
+
+        public final Trie getNode() {
+            return node;
+        }
+
+        public final byte[] getTraversedPath() {
+            return traversedPath;
+        }
+
+        public final byte[] getExpandedPath() {
+            byte[] encodedFullKey = getTraversedPath();
+            if (node.getEncodedSharedPath() != null) {
+                encodedFullKey = concat(getTraversedPath(), PathEncoder.decode(node.getEncodedSharedPath(), node.getSharedPathLength()));
+            }
+            return encodedFullKey;
+        }
+
+        public String toString() {
+            byte[] encodedFullKey = getExpandedPath();
+            StringBuilder ouput = new StringBuilder();
+            for (byte b : encodedFullKey) {
+                ouput.append( b == 0 ? '0': '1');
+            }
+            return ouput.toString();
+        }
+
+        private static byte[] concat(byte[]... arrays) {
+            int length = Stream.of(arrays).mapToInt(array -> array.length).sum();
+            byte[] result = new byte[length];
+            int pos = 0;
+            for (byte[] array : arrays) {
+                System.arraycopy(array, 0, result, pos, array.length);
+                pos += array.length;
+            }
+            return result;
+        }
+    }
 
 }

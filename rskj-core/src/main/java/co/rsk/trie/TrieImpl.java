@@ -37,9 +37,8 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Stream;
 
 import static org.ethereum.util.ByteUtil.EMPTY_BYTE_ARRAY;
 
@@ -552,9 +551,14 @@ public class TrieImpl implements Trie {
         target.save(this);
     }
 
-    public static byte[] concat(byte[] first, byte[] second) {
-        byte[] result = Arrays.copyOf(first, first.length + second.length);
-        System.arraycopy(second, 0, result, first.length, second.length);
+    private static byte[] concat(byte[]... arrays) {
+        int length = Stream.of(arrays).mapToInt(array -> array.length).sum();
+        byte[] result = new byte[length];
+        int pos = 0;
+        for (byte[] array : arrays) {
+            System.arraycopy(array, 0, result, pos, array.length);
+            pos += array.length;
+        }
         return result;
     }
 
@@ -1311,6 +1315,21 @@ public class TrieImpl implements Trie {
         return valueHash;
     }
 
+    @Override
+    public Iterator<IterationElement> getInOrderIterator() {
+        return new InOrderIterator(new byte[]{}, this);
+    }
+
+    @Override
+    public Iterator<IterationElement> getPreOrderIterator() {
+        return new PreOrderIterator(new byte[]{}, this);
+    }
+
+    @Override
+    public Iterator<IterationElement> getPostOrderIterator() {
+        return new PostOrderIterator(new byte[]{}, this);
+    }
+
     protected byte[] retrieveLongValue() {
         return store.retrieveValue(valueHash);
     }
@@ -1356,11 +1375,13 @@ public class TrieImpl implements Trie {
         return new Keccak256(Keccak256Helper.keccak256(RLP.encodeElement(EMPTY_BYTE_ARRAY)));
     }
 
-    // These two functions are for converting the trie to the old format
-    protected byte[] getEncodedSharedPath() {
+    @Override
+    public byte[] getEncodedSharedPath() {
         return encodedSharedPath;
     }
-    protected int getSharedPathLength() {
+
+    @Override
+    public int getSharedPathLength() {
         return sharedPathLength;
     }
 
@@ -1418,5 +1439,162 @@ public class TrieImpl implements Trie {
         private static ExpandedKey expandKey(byte[] bytes) {
             return new ExpandedKey(TrieImpl.expandKey(bytes));
         }
+    }
+
+    /**
+     * Returns the leftmost node that has not yet been visited that node is normally on top of the stack
+     */
+    private static class InOrderIterator implements Iterator<IterationElement> {
+
+        private final Deque<IterationElement> visiting;
+
+        public InOrderIterator(byte[] traversedPath, TrieImpl root) {
+            Objects.requireNonNull(root);
+            this.visiting = new LinkedList<>();
+            // find the leftmost node, pushing all the intermediate nodes onto the visiting stack
+            pushLeftmostNode(traversedPath, root);
+            // now the leftmost unvisited node is on top of the visiting stack
+        }
+
+        /**
+         * return the leftmost node that has not yet been visited that node is normally on top of the stack
+         */
+        @Override
+        public IterationElement next() {
+            IterationElement visitingElement = visiting.pop();
+            TrieImpl node = (TrieImpl) visitingElement.getNode();
+            // if the node has a right child, its leftmost node is next
+            Trie rightNode = node.retrieveNode(1);
+            if (rightNode != null) {
+                pushLeftmostNode( // find the leftmost node of the right child
+                    concatKeys(visitingElement.getTraversedPath(), node, (byte) 0x01),
+                    (TrieImpl) rightNode
+                );
+                // note "node" has been replaced on the stack by its right child
+            } // else: no right subtree, go back up the stack
+            // next node on stack will be next returned
+            return visitingElement;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !visiting.isEmpty(); // no next node left
+        }
+
+        /**
+         * Find the leftmost node from this root, pushing all the intermediate nodes onto the visiting stack
+         *
+         * @param traversedPath
+         * @param node the root of the subtree for which we are trying to reach the leftmost node
+         */
+        private void pushLeftmostNode(byte[] traversedPath, TrieImpl node) {
+            // find the leftmost node
+            if (node != null) {
+                visiting.push(new IterationElement(traversedPath, node)); // push this node
+                pushLeftmostNode( // recurse on next left node
+                        concatKeys(traversedPath, node, (byte) 0x00),
+                        (TrieImpl) node.retrieveNode(0)
+                );
+            }
+        }
+    }
+
+    private class PreOrderIterator implements Iterator<IterationElement> {
+
+        private final Deque<IterationElement> visiting;
+
+        public PreOrderIterator(byte[] traversedPath, TrieImpl trie) {
+            Objects.requireNonNull(trie);
+            this.visiting = new LinkedList<>();
+            this.visiting.push(new IterationElement(traversedPath, trie));
+        }
+
+        @Override
+        public IterationElement next() {
+            IterationElement visitingElement = visiting.pop();
+            TrieImpl node = (TrieImpl) visitingElement.getNode();
+            // need to visit the left subtree first, then the right since a stack is a LIFO, push the right subtree first,
+            // then the left
+            TrieImpl rightNode = (TrieImpl) node.retrieveNode(1);
+            if (rightNode != null) {
+                visiting.push(new IterationElement(concatKeys(visitingElement.getTraversedPath(), node, (byte) 0x01), rightNode));
+            }
+            TrieImpl leftNode = (TrieImpl) node.retrieveNode(0);
+            if (leftNode != null) {
+                visiting.push(new IterationElement(concatKeys(visitingElement.getTraversedPath(), node, (byte) 0x00), leftNode));
+            }
+            // may not have pushed anything.  If so, we are at the end
+            return visitingElement;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !visiting.isEmpty(); // no next node left
+        }
+    }
+
+    private class PostOrderIterator implements Iterator<IterationElement> {
+
+        private final Deque<IterationElement> visiting;
+        private final Deque<Boolean> visitingRightChild;
+
+        public PostOrderIterator(byte[] traversedPath, TrieImpl trie) {
+            Objects.requireNonNull(trie);
+            this.visiting = new LinkedList<>();
+            this.visitingRightChild = new LinkedList<>();
+            // find the leftmost node, pushing all the intermediate nodes onto the visiting stack
+            pushLeftmostNodeRecord(traversedPath, trie);
+            // the node on top of the visiting stack is the next one to be visited, unless it has a right subtree
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !visiting.isEmpty(); // no next node left
+        }
+
+        @Override
+        public IterationElement next() {
+            IterationElement visitingElement = visiting.peek();
+            TrieImpl node = (TrieImpl) visitingElement.getNode();
+            Trie rightNode = node.retrieveNode(1);
+            if (rightNode == null || visitingRightChild.peek()) { // no right subtree, or right subtree already visited
+                // already visited right child, time to visit the node on top
+                visiting.removeFirst(); // it was already picked
+                visitingRightChild.removeFirst(); // it was already picked
+                return visitingElement;
+            } else { // now visit this node's right subtree
+                visitingRightChild.removeFirst();
+                visitingRightChild.push(Boolean.TRUE);
+                pushLeftmostNodeRecord( // now push everything down to the leftmost node in the right subtree
+                        concatKeys(visitingElement.getTraversedPath(), node, (byte) 0x01),
+                        (TrieImpl) rightNode
+                );
+                return next(); // use recursive call to visit that node
+            }
+        }
+
+        /**
+         * Find the leftmost node from this root, pushing all the intermediate nodes onto the visiting stack
+         * and also stating that each is a left child of its parent
+         * @param traversedPath
+         * @param node the root of the subtree for which we are trying to reach the leftmost node
+         */
+        private void pushLeftmostNodeRecord(byte[] traversedPath, TrieImpl node) {
+            // find the leftmost node
+            if (node != null) {
+                visiting.push(new IterationElement(traversedPath, node)); // push this node
+                visitingRightChild.push(Boolean.FALSE); // record that it is on the left
+                Trie leftNode = node.retrieveNode(0);
+                pushLeftmostNodeRecord(concatKeys(traversedPath, node, (byte) 0x00), (TrieImpl) leftNode); // continue looping
+            }
+        }
+    }
+
+    private static byte[] concatKeys(byte[] traversedPath, TrieImpl node, byte childSuffix) {
+        if (node.encodedSharedPath != null) {
+            byte[] sharedPath = PathEncoder.decode(node.encodedSharedPath, node.sharedPathLength);
+            traversedPath = concat(traversedPath, sharedPath);
+        }
+        return concat(traversedPath, new byte[] { childSuffix });
     }
 }
